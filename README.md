@@ -29,7 +29,7 @@
 
 ## 安裝與執行
 
-跨平台自動偵測作業系統（macOS／Ubuntu／Windows 10），已在 macOS 上實際跑過驗證：
+跨平台自動偵測作業系統（macOS／Ubuntu／Windows 10），已在 macOS 與 Ubuntu Server（i7、Python 3.8）上實際跑過驗證：
 
 ```bash
 cd scripts/asr_pipeline
@@ -37,14 +37,22 @@ python3 setup.py       # macOS / Linux
 # 或雙擊 run_setup.bat（Windows）／ run_setup.sh（macOS/Linux 也可用）
 ```
 
-`setup.py` 會依偵測到的作業系統自動安裝 `ffmpeg`（macOS 用 Homebrew、Ubuntu 用 `apt-get`、Windows 用 `winget`），建立 `.venv`，安裝 `requirements.txt`，最後跑 `env_check.py` 驗證環境。**Ubuntu／Windows 上的路徑尚未實際測過**，邏輯上應該可行，遇到問題以實測結果為準。
+`setup.py` 會依偵測到的作業系統自動安裝 `ffmpeg`（macOS 用 Homebrew、Ubuntu 用 `apt-get`、Windows 用 `winget`），建立 `.venv`，安裝 `requirements.txt`，最後跑 `env_check.py` 驗證環境。在 Ubuntu（Python 3.8）上實測時修過幾個環境相容性問題：`python3-venv` 系統套件缺失、venv 建立到一半失敗留下殘缺環境、`tokenizers` 新版沒有 Python 3.8 wheel 需要編譯——這些都已經修進 `setup.py`／`requirements.txt`，見 git log。**Windows 10 上的路徑尚未實際測過**，邏輯上應該可行，遇到問題以實測結果為準。
 
-跑主流程：
+**注意：一定要用 `.venv` 裡的 Python 執行，不要用裸的 `python3`／`python`。** 套件都裝在 `.venv` 裡，不是系統全域，用系統原生 `python3` 跑 `env_check.py` 或任何腳本都會出現「NOT INSTALLED」／`ModuleNotFoundError`，這不是安裝失敗，是沒有指到 venv。兩種正確用法：
 
 ```bash
-.venv/bin/python phase1_pipeline.py --dir <週會資料夾> --date <yyyyMMdd>
-# Windows: .venv\Scripts\python.exe phase1_pipeline.py --dir <週會資料夾> --date <yyyyMMdd>
+# 方式一：直接指定 venv 的 python（每次都要打完整路徑，較保險）
+.venv/bin/python3 env_check.py
+.venv/bin/python3 phase1_pipeline.py --dir <週會資料夾> --date <yyyyMMdd>
+
+# 方式二：先 activate，這個 shell session 裡的 python3 就會指向 venv
+source .venv/bin/activate
+python3 env_check.py
+python3 phase1_pipeline.py --dir <週會資料夾> --date <yyyyMMdd>
 ```
+
+Windows 對應：`.venv\Scripts\python.exe env_check.py`、`.venv\Scripts\python.exe phase1_pipeline.py ...`。
 
 產出未校對的原始逐字稿後，把內容貼進 Claude Code，附上 `Keywords.txt`／`RulesAndRestricts.txt`，請它依規則校對（逐字不漏、不彙整、不美化，只修正錯字與專有名詞）。
 
