@@ -1,0 +1,12 @@
+{
+  "name": "app-dev-team-transcript-plan",
+  "version": "1.0.0",
+  "description": "產生 App Dev Team 逐字稿自動化計劃書 docx 的腳本",
+  "private": true,
+  "dependencies": {
+    "docx": "^9.0.0"
+  },
+  "scripts": {
+    "build-plan": "node build_plan_docx.js"
+  }
+}
