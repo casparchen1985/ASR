@@ -9,7 +9,7 @@ sys.stdout.reconfigure(encoding="utf-8")  # Windows 主控台預設編碼不是 
 sys.stderr.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from align_mix import build_merged_recording, _ffmpeg
+from align_mix import build_merged_recording, _ffmpeg, _ffprobe
 from diarize import diarize
 from transcribe import transcribe, DEFAULT_MODEL
 
@@ -31,8 +31,7 @@ def discover_tracks(input_dir: Path) -> list:
 
 
 def get_duration_seconds(path: Path) -> float:
-    ffmpeg = _ffmpeg()
-    ffprobe = ffmpeg.replace("ffmpeg", "ffprobe")
+    ffprobe = _ffprobe()
     result = subprocess.run(
         [ffprobe, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
         capture_output=True, text=True,

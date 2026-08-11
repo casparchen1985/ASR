@@ -33,6 +33,14 @@ def _ffmpeg():
     return path
 
 
+def _ffprobe():
+    # 不能對整個路徑做 ffmpeg->ffprobe 字串取代：安裝路徑裡可能還有其他地方
+    # 包含 "ffmpeg" 子字串（例如 winget 裝的資料夾 ffmpeg-9.0-full_build），
+    # 取代到就會產生不存在的路徑。只取代檔名部分，且只取代第一個出現處。
+    ffmpeg_path = Path(_ffmpeg())
+    return str(ffmpeg_path.with_name(ffmpeg_path.name.replace("ffmpeg", "ffprobe", 1)))
+
+
 def _run(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -41,8 +49,7 @@ def _run(cmd):
 
 
 def get_duration_seconds(path: Path) -> float:
-    ffmpeg = _ffmpeg()
-    ffprobe = ffmpeg.replace("ffmpeg", "ffprobe")
+    ffprobe = _ffprobe()
     result = subprocess.run(
         [ffprobe, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
         capture_output=True, text=True,
