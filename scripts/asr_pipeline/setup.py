@@ -58,9 +58,10 @@ def ensure_python_deps():
     _print("建立虛擬環境並安裝 Python 套件")
     if not VENV_DIR.exists():
         subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
-    pip = _venv_bin("pip")
-    subprocess.run([str(pip), "install", "--upgrade", "pip"], check=True)
-    subprocess.run([str(pip), "install", "-r", str(REPO_DIR / "requirements.txt")], check=True)
+    python = _venv_bin("python")
+    # Windows 上直接呼叫 pip.exe 升級自己會失敗（執行中的檔案不能覆寫），改用 python -m pip
+    subprocess.run([str(python), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+    subprocess.run([str(python), "-m", "pip", "install", "-r", str(REPO_DIR / "requirements.txt")], check=True)
 
 
 def run_env_check():
