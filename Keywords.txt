@@ -1,0 +1,53 @@
+Software name -
+WDMS, WEB Installer, Jira / Ticket, Linear, Clickup, Slack / channel, Teams, Telegram (TG), Gerrit,
+ADC, ADC Client, Enterprise Settings, KeyMappingManager (key service), Software Trigger, SIP Controller,
+EPC, E-ink, Ink Tag, Remote Cloud, OTA Update, Reader service, Reader Config, Barcode To Setting,
+remote cloud express, canvas, 
+
+Test terms -
+Pass, Fail, Conditional Pass
+
+Project terms -
+Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, 
+
+Reader terms -
+SDC, Hotfix service, activation tool, activation key generator, Reader Type, license file,  HW partition
+
+Software Dev -
+Image, Key server, Sign Key, Build, OTA, source code, Manifest, deploy, JSON, 
+
+Android System -
+mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll,
+Android 9~16 (A9 ~ A16), Runtime permission, ADB, push, MDM,
+
+Android Certificate -
+GMS, BTS, CTS, IR, MR, 
+
+Product Model -
+RS10, RS20 (F1), RS35, RS36, RS38, RK26, RK95, RK96, 
+
+Division -
+PM Head:
+Rita
+
+Software (SW) PM:
+Peter.Lin, Chris.Fan, Lynn.Lin, Henry.Huang
+
+App Dev:
+JiaChuan(家全), Caspar, Howard.Lu, Eric, Ocer, Henry.Tung, Kevin, Nicole, Miller
+
+BSP RD:
+Rick.Lu, Joe.Hsu, Aaron.Lan, 本和
+
+MDM RD:
+Tim, 
+
+MIS: 
+Jekyll, 
+
+SIT(System Integration Test):
+Joe, Ellen, Jiajia(珈嘉), 
+
+Outsourcing -
+ODM:
+Meig (美隔), MobiWire, 華勤, 潤芯微(RIVOTEK)
