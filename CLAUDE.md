@@ -1,7 +1,8 @@
 # App Dev Team 週會逐字稿 AI 輔助流程 — 專案交接說明
 
-> 這份文件是給 Claude Code（或任何接手這個專案的 Claude session）看的完整背景。
-> 目的：讓你不用重新問一輪需求，直接接續開發「自動化腳本」這個下一步。
+> 這份文件是給 Claude Code（或任何接手這個專案的 Claude session）看的完整背景，
+> 重點是記錄計劃書定案過程中每個決策的「為什麼」，讓你不用重新問一輪需求就能延續同一套邏輯。
+> **實作現況、技術棧、已知限制以 [`README.md`](./README.md) 為準**——那份文件會隨程式碼更新，這份不會，只留決策脈絡。
 
 ---
 
@@ -11,7 +12,7 @@
 需要一套流程，把音檔轉成**繁體中文逐字稿草稿**，用 AI 輔助降低人工聽打負擔，
 **而非追求特定準確率數字**——這點很重要，見下方「關鍵決策」。
 
-目前狀態：**計劃書（docx）已完成並定案，下一步是把流程寫成實際能跑的自動化腳本（尚未開始）。**
+目前狀態（2026-08-11 確認過一次，之後請以 README.md 為準）：**計劃書（docx）已定案，Phase 1 自動化腳本已實作完成**（`scripts/asr_pipeline/`：多軌對齊、降噪正規化、混音、語者分段、faster-whisper 轉錄、簡轉繁），Phase 2（依 RD 報告切檔具名命名）尚未實作。AI 校對因使用者僅有 Claude Team 帳號、無 API 計費權限，改為在 Claude Code 對話中人工貼草稿校對，不是獨立腳本。
 
 ---
 
@@ -20,8 +21,9 @@
 | 檔案 | 說明 |
 |---|---|
 | `App_Dev_Team_逐字稿自動化計劃書.docx` | 完整計劃書，Word 格式，可直接給主管/團隊看 |
-| `build.js` | 產生上述 docx 的 Node.js 腳本（用 `docx` npm 套件），若要再改計劃書內容，改這支腳本後重新 `node build.js` 即可 |
-| `build_v_accuracy_backup.js` | 拿掉準確率框架**之前**的舊版本備份，僅供對照參考，不是目前生效版本 |
+| `scripts/build_plan_docx.js` | 產生上述 docx 的 Node.js 腳本（用 `docx` npm 套件），若要再改計劃書內容，改這支腳本後重新跑即可 |
+| `README.md` | 技術現況說明，給接手維護者/貢獻者看，實作進度與已知限制以此為準 |
+| `scripts/asr_pipeline/` | Phase 1 實作：`setup.py`、`preprocess.py`、`align_mix.py`、`diarize.py`、`transcribe.py`、`phase1_pipeline.py` 等，細節見 README.md |
 
 ---
 
@@ -119,19 +121,14 @@
 
 ## 尚未完成的下一步
 
-使用者已多次表示要開始寫「真正能跑的自動化腳本」，但每次都先轉去修計劃書內容，**腳本本身尚未開始寫**。
+Phase 1 腳本已實作並在一台機器上實測跑過一次（見 README.md「實測效能數據」）。尚未完成的部分：
 
-如果接下來的工作是寫腳本，大致的技術棧會是：
+- **Phase 2**：依 RD 報告內容切成個別檔案並具名命名（`yyyyMMdd_SerialNumber_RDName.*`），目前完全沒開始。
+- **多機環境驗證**：候選環境還有 Ubuntu Server（i7-7700＋32GB）、Windows 10 筆電（i5-8250U＋32GB），`setup.py` 邏輯上支援但尚未實測跑通。
+- **斷錄接續邏輯的真實案例校準**：`align_mix.py` 的 `CONFIDENCE_THRESHOLD` 只用「確實重疊」案例校準過，還沒有真正的裝置中途斷錄案例驗證。
+- 排程批次執行（週五深夜到週末跑，週一上班前出草稿）目前是手動跑 `phase1_pipeline.py`，還沒接上 cron / Windows 工作排程器。
 
-- **音訊前處理**：`ffmpeg`（loudnorm 濾鏡）＋ `noisereduce`（頻譜門控，鎖定冷氣頻段）
-- **時間對齊**：`librosa` 或 `ffmpeg` 做音訊互相關（cross-correlation）
-- **ASR**：`faster-whisper`，`large-v3` 模型，純 CPU 執行（環境是 i7 筆電／PC Server／MIS VM，無 GPU）
-- **多軌比對**：依時間軸切段，文字差異比對（3 軌以上多數決；2 軌一致性比對），不一致的段落交給 Claude 判斷或標記待確認
-- **AI 校對**：呼叫 Claude API，讀取專有名詞對照表做校正
-- **排程**：因為要用時間換取運算資源，需要能在週五深夜到週末批次執行（例如 cron job 或 Windows工作排程器，視 VM 環境而定）
-- **輸出**：逐字稿草稿 + 會議摘要 + 行動項目清單，存到指定資料夾，並清楚標示「草稿，待確認」
-
-**開始寫腳本前，建議先確認：** 使用者實際的 VM／PC Server 規格（RAM、CPU 核心數），因為這會直接影響 large-v3 模型在無 GPU 下的實際運算時間，計劃書裡目前只寫「需實測確認」，還沒有具體數字。
+技術棧、檔案結構、已知限制、實測效能數據等細節一律以 README.md 為準，不在這裡重複維護。
 
 ---
 
