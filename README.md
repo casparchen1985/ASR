@@ -39,7 +39,7 @@ python3 setup.py       # macOS / Linux
 
 `setup.py` 會依偵測到的作業系統自動安裝 `ffmpeg`（macOS 用 Homebrew、Ubuntu 用 `apt-get`、Windows 用 `winget`），建立 `.venv`，安裝 `requirements.txt`，最後跑 `env_check.py` 驗證環境。在 Ubuntu（Python 3.8）上實測時修過幾個環境相容性問題：`python3-venv` 系統套件缺失、venv 建立到一半失敗留下殘缺環境、`tokenizers` 新版沒有 Python 3.8 wheel 需要編譯——這些都已經修進 `setup.py`／`requirements.txt`，見 git log。**Windows 10 上的路徑尚未實際測過**，邏輯上應該可行，遇到問題以實測結果為準。
 
-**注意：一定要用 `.venv` 裡的 Python 執行，不要用裸的 `python3`／`python`。** 套件都裝在 `.venv` 裡，不是系統全域，用系統原生 `python3` 跑 `env_check.py` 或任何腳本都會出現「NOT INSTALLED」／`ModuleNotFoundError`，這不是安裝失敗，是沒有指到 venv。兩種正確用法：
+**注意：一定要用 `.venv` 裡的 Python 執行，不要用裸的 `python3`／`python`。** 套件都裝在 `.venv` 裡，不是系統全域，用系統原生 `python3` 跑任何腳本（`env_check.py`、`align_mix.py`、`diarize.py`、`transcribe.py`、`preprocess.py`、`setup.py`、`phase1_pipeline.py` ……全部都算）都會出現「NOT INSTALLED」／`ModuleNotFoundError`，這不是安裝失敗，是沒有指到 venv。兩種正確用法：
 
 ```bash
 # 方式一：直接指定 venv 的 python（每次都要打完整路徑，較保險）
