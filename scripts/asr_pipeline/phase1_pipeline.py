@@ -94,7 +94,8 @@ def group_into_paragraphs(asr_segments: list, speaker_segments: list) -> list:
     return paragraphs
 
 
-def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = False, skip_asr: bool = False) -> tuple:
+def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = False,
+        skip_asr: bool = False, skip_align: bool = False) -> tuple:
     output_dir = output_dir or input_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{date}_AppDevWeeklyMeeting"
@@ -103,11 +104,18 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
         model_thread = threading.Thread(target=ensure_model_ready, daemon=True)
         model_thread.start()
 
-    tracks = discover_tracks(input_dir)
-    confirm_tracks(tracks, assume_yes)
-
     merged_m4a = output_dir / f"{stem}.m4a"
-    build_merged_recording(tracks, merged_m4a)
+
+    if skip_align:
+        # 對齊混音是整個流程最花時間的一段；如果只是要吃到 transcribe.py 讀 Keywords.txt
+        # 這類跟對齊無關的更新，重跑一次已經對好的合併錄音即可，不需要重新對齊
+        if not merged_m4a.exists():
+            raise RuntimeError(f"--skip-align 需要已存在的合併錄音檔：{merged_m4a}")
+        print(f"沿用既有合併錄音，跳過對齊混音：{merged_m4a}")
+    else:
+        tracks = discover_tracks(input_dir)
+        confirm_tracks(tracks, assume_yes)
+        build_merged_recording(tracks, merged_m4a)
 
     if skip_asr:
         return merged_m4a, None
@@ -138,6 +146,8 @@ if __name__ == "__main__":
     parser.add_argument("--outdir", default=None, help="輸出資料夾，預設與 --dir 相同")
     parser.add_argument("--yes", action="store_true", help="略過檔案清單確認提示")
     parser.add_argument("--skip-asr", action="store_true", help="混音完成後就停止，不執行分段偵測與 ASR 轉錄")
+    parser.add_argument("--skip-align", action="store_true",
+                         help="沿用已存在的 {date}_AppDevWeeklyMeeting.m4a，跳過對齊混音，只重跑分段偵測與 ASR 轉錄")
     args = parser.parse_args()
 
     m4a_result, txt_result = run(
@@ -145,6 +155,7 @@ if __name__ == "__main__":
         Path(args.outdir) if args.outdir else None,
         assume_yes=args.yes,
         skip_asr=args.skip_asr,
+        skip_align=args.skip_align,
     )
     print(f"合併錄音: {m4a_result}")
     if txt_result is not None:
