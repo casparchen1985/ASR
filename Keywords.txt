@@ -5,26 +5,26 @@ EPC, E-ink, Ink Tag, Remote Cloud, OTA Update, Reader service, Reader Config, Ba
 remote cloud express, canvas, 
 
 Test terms -
-Pass, Fail, Conditional Pass
+Pass, Fail, Conditional Pass, Pending,
 
 Project terms -
-Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, 
+Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, kick-off,
 
 Reader terms -
 SDC, Hotfix service, activation tool, activation key generator, Reader Type, license file,  HW partition
 
 Software Dev -
-Image, Key server, Sign Key, Build, OTA, source code, Manifest, deploy, JSON, 
+Image, Key server, Sign Key, Build, OTA, source code, Manifest, deploy, JSON, APK file,
 
 Android System -
-mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll,
+mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll, Qualcomm / Qcom , MTK
 Android 9~16 (A9 ~ A16), Runtime permission, ADB, push, MDM,
 
 Android Certificate -
 GMS, BTS, CTS, IR, MR, 
 
 Product Model -
-RS10, RS20 (F1), RS35, RS36, RS38, RK26, RK95, RK96, 
+RS10, RS20 (F1), RS35, RS36, RS38, RK25, RK26, RK95, RK96, 
 
 Division -
 PM Head:
@@ -51,3 +51,6 @@ Joe, Ellen, Jiajia(珈嘉),
 Outsourcing -
 ODM:
 Meig (美隔), MobiWire, 華勤, 潤芯微(RIVOTEK)
+
+已離職 -
+Lawrence (CTO), Square (App Dev Director),
