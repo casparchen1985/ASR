@@ -16,30 +16,65 @@ _s2twp = OpenCC("s2twp")
 
 _HEADER_LINE = re.compile(r"^[\w()（）\s]+[-:：]$")
 
+# 實測過（見 git log／README「已知限制」）：把 Keywords.txt 全部詞彙串成一長串（1000+ 字元、
+# 沒有語句結構）直接餵給 Whisper 的 initial_prompt，會讓轉錄開頭一段變成完全無關的幻覺文字。
+# 對照測試證實只要縮短並包成自然語句就不會重現這個問題，所以這裡限制長度，並優先保留
+# 型號／專有名詞這類 ASR 最常聽錯、且不像人名一樣容易被模型過度腦補的類別。
+_PROMPT_LEAD_IN = "以下是這場會議可能提到的產品型號與專有名詞："
+_MAX_PROMPT_CHARS = 200
+_PRIORITY_HEADER_KEYWORDS = ("product model", "reader", "certificate")
 
-def load_keyword_hint(keywords_path: Path = KEYWORDS_PATH) -> str:
-    """從 Keywords.txt 讀取分類詞彙表（逗號分隔、依分類標頭區隔），組成 Whisper initial_prompt
-    用的詞彙提示。每次執行都重新讀取，不快取，確保吃到團隊最新更新的版本。
 
-    分類標頭行（例如 "Software name -"、"Division -"、"PM Head:"）本身不是詞彙，會被跳過；
-    其餘每行依逗號拆開，去除頭尾空白後當作詞彙。
+def load_keyword_hint(keywords_path: Path = KEYWORDS_PATH, max_chars: int = _MAX_PROMPT_CHARS) -> str:
+    """從 Keywords.txt 讀取分類詞彙表，組成給 Whisper initial_prompt 用的簡短提示。
+    每次執行都重新讀取，不快取，確保吃到團隊最新更新的版本。
+
+    分類標頭行（例如 "Software name -"、"Division -"、"PM Head:"）本身不是詞彙，用來分組；
+    型號／Reader／認證類別優先排前面，其餘依檔案原順序，再取到字數上限為止。
     """
     if not keywords_path.exists():
         return ""
     text = keywords_path.read_text(encoding="utf-8")
 
-    terms = []
-    seen = set()
+    sections = []
+    header, terms = "", []
     for line in text.splitlines():
         line = line.strip()
-        if not line or _HEADER_LINE.match(line):
+        if not line:
             continue
-        for piece in line.split(","):
-            term = piece.strip()
-            if term and term not in seen:
-                seen.add(term)
-                terms.append(term)
-    return "、".join(terms)
+        if _HEADER_LINE.match(line):
+            if terms:
+                sections.append((header, terms))
+            header, terms = line, []
+            continue
+        terms.extend(piece.strip() for piece in line.split(",") if piece.strip())
+    if terms:
+        sections.append((header, terms))
+
+    def section_priority(h: str) -> int:
+        h = h.lower()
+        return 0 if any(k in h for k in _PRIORITY_HEADER_KEYWORDS) else 1
+
+    sections.sort(key=lambda s: section_priority(s[0]))
+
+    seen = set()
+    ordered_terms = []
+    for _h, ts in sections:
+        for t in ts:
+            if t not in seen:
+                seen.add(t)
+                ordered_terms.append(t)
+
+    budget = max_chars - len(_PROMPT_LEAD_IN)
+    picked, used = [], 0
+    for t in ordered_terms:
+        added = len(t) + (1 if picked else 0)  # "、" 分隔符也算進預算
+        if used + added > budget:
+            break
+        picked.append(t)
+        used += added
+
+    return _PROMPT_LEAD_IN + "、".join(picked) if picked else ""
 
 
 def transcribe(audio_path: Path, model_size: str = DEFAULT_MODEL, cpu_threads: int = None) -> list:
