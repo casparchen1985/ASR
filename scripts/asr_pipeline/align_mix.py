@@ -30,6 +30,10 @@ CONFIDENCE_THRESHOLD = 10.0
 # （FRAME_SEC=0.025／FRAME_HOP_SEC=0.010），比「判斷粒度需在 50ms 以內」的要求更嚴。
 ENERGY_FRAME_SEC = 0.020
 ENERGY_HOP_SEC = 0.010
+# 判斷「這一刻真的有人講話」的門檻：能量要比該軌自己的雜訊底（低百分位數）高出這個倍數，
+# 沒有任何一軌達標就視為沒人講話、不切換，避免停頓時純粹雜訊底高低差異觸發切換
+# （2026-08-14 實測發現：不做這層判斷會導致一直聽到背景雜訊忽大忽小）。
+SILENCE_MARGIN_RATIO = 2.0
 # 最短停留時間：兩軌能量接近時避免頻繁來回切換（chattering）。
 MIN_DWELL_SEC = 0.2
 # 切換點交叉淡化長度：硬切換結構性避免了多軌疊加造成的空洞感，
@@ -180,15 +184,30 @@ def _short_time_energy(y: np.ndarray, sr: int, frame_sec: float, hop_sec: float)
 
 def _select_active_track(energies: np.ndarray, hop_sec: float, min_dwell_sec: float) -> np.ndarray:
     """energies: (n_tracks, n_frames)，回傳每個影格選中的音軌 index。
+
+    沒人講話的時候（所有軌都只有各自的殘留雜訊底）不切換：純粹比較能量會導致停頓時
+    在不同軌的雜訊特性之間跳來跳去，聽起來像背景雜訊忽大忽小。做法是先估計每一軌自己的
+    雜訊底（該軌能量的低百分位數），只有能量明顯高於自己雜訊底（SILENCE_MARGIN_RATIO 倍）
+    才視為「這一刻真的有人講話」，候選名單只從這些「活躍」的軌裡面選；如果當下沒有任何一軌
+    活躍，維持原本選的軌，不切換。
+
     套最短停留時間（遲滯判斷）：候選主軌換人時，要撐滿 min_dwell_sec 才真的切換，
     避免兩軌能量接近時來回快速切換。"""
-    selection = np.argmax(energies, axis=0)
+    noise_floor = np.percentile(energies, 20, axis=1, keepdims=True)
+    is_active = energies > noise_floor * SILENCE_MARGIN_RATIO
+
     min_dwell_frames = max(1, round(min_dwell_sec / hop_sec))
 
-    current = selection[0]
+    current = int(np.argmax(energies[:, 0]))
     since_switch = 0
-    smoothed = np.empty(len(selection), dtype=int)
-    for i, candidate in enumerate(selection):
+    smoothed = np.empty(energies.shape[1], dtype=int)
+    for i in range(energies.shape[1]):
+        active_idx = np.where(is_active[:, i])[0]
+        if len(active_idx) == 0:
+            smoothed[i] = current
+            since_switch += 1
+            continue
+        candidate = int(active_idx[np.argmax(energies[active_idx, i])])
         if candidate != current and since_switch >= min_dwell_frames:
             current = candidate
             since_switch = 0
