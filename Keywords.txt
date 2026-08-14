@@ -2,19 +2,20 @@ Software name -
 WDMS, WEB Installer, Jira / Ticket, Linear, Clickup, Slack / channel, Teams, Telegram (TG), Gerrit,
 ADC, ADC Client, Enterprise Settings, KeyMappingManager (key service), Software Trigger, SIP Controller,
 EPC, E-ink, Ink Tag, Remote Cloud, OTA Update, Reader service, Reader Config, Barcode To Setting,
-remote cloud express, canvas, 
+remote cloud express, canvas, Intelli Worker, RFID Service, EZ Config, EZ Edit, Associate Assistant, 
+OS Upgrade, Device Health Dashboard, Nginx, Launch Pad, WMDS Agent, Network Assistant, Label Check OCR Demo, HF RFID Configuration, 
 
 Test terms -
 Pass, Fail, Conditional Pass, Pending,
 
 Project terms -
-Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, kick-off,
+Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, kick-off, Deployment Server, 
 
 Reader terms -
-SDC, Hotfix service, activation tool, activation key generator, Reader Type, license file,  HW partition
+SDC, Hotfix service, activation tool, activation key generator, Reader Type, license file,  HW partition, CertBot
 
 Software Dev -
-Image, Key server, Sign Key, Build, OTA, source code, Manifest, deploy, JSON, APK file,
+Image, Key server, Sign Key Web, Build, OTA, source code, Manifest, deploy, JSON, APK file, Error code,
 
 Android System -
 mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll, Qualcomm / Qcom , MTK
