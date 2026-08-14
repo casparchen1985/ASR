@@ -66,17 +66,25 @@ def reduce_ac_noise(input_wav: Path, output_wav: Path) -> None:
     sf.write(str(output_wav), cleaned, sr)
 
 
-def preprocess(input_path: Path, output_wav: Path) -> Path:
-    with tempfile.TemporaryDirectory() as tmp:
-        normalized = Path(tmp) / "normalized.wav"
-        normalize_loudness(input_path, normalized)
-        reduce_ac_noise(normalized, output_wav)
-    return output_wav
+def dynamic_gain(input_path: Path, output_wav: Path) -> None:
+    """逐時段動態調整響度（ffmpeg dynaudnorm），取代 normalize_loudness 對整條軌套用單一線性增益的作法。
+    單軌內不同講者/距離造成的音量差異依各自所在時段分別調整，避免離麥克風遠的時段因為
+    整條軌平均響度偏低而被過度放大，連噪音底一起拉大（見 README 已知限制）。"""
+    ffmpeg = _ffmpeg()
+    _run([
+        ffmpeg, "-y", "-i", str(input_path),
+        "-af", "dynaudnorm",
+        "-ar", str(SAMPLE_RATE), "-ac", "1",
+        str(output_wav),
+    ])
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("usage: preprocess.py <input_audio> <output_wav>")
         sys.exit(1)
-    result = preprocess(Path(sys.argv[1]), Path(sys.argv[2]))
-    print(f"done: {result}")
+    with tempfile.TemporaryDirectory() as tmp:
+        gained = Path(tmp) / "gained.wav"
+        dynamic_gain(Path(sys.argv[1]), gained)
+        reduce_ac_noise(gained, Path(sys.argv[2]))
+    print(f"done: {sys.argv[2]}")

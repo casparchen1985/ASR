@@ -13,7 +13,8 @@ sys.stdout.reconfigure(encoding="utf-8")  # Windows 主控台預設編碼不是 
 sys.stderr.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from preprocess import preprocess, normalize_loudness, SAMPLE_RATE
+from preprocess import dynamic_gain, reduce_ac_noise, normalize_loudness, SAMPLE_RATE
+from dereverb import dereverb_cluster
 
 QUERY_SEC = 300          # 用來搜尋位置的查詢片段長度上限（取自每一軌開頭）
 SEARCH_SR = 2000         # 粗略定位搜尋用的低取樣率，只影響搜尋速度，不影響最終混音音質
@@ -24,6 +25,18 @@ REFINE_QUERY_SEC = 20    # 精修用的查詢片段長度；太短（例如 2~5 
 # 用這次專案手上的真實錄音校準：所有已知「確實重疊」的案例 z 值介於 15~565 之間，10.0 留了安全邊界。
 # 沒有真實的「確實不重疊」案例可以測，這個門檻還沒有驗證過負樣本，之後遇到真實案例應該回頭校準。
 CONFIDENCE_THRESHOLD = 10.0
+
+# 動態選軌用的短時能量包絡影格參數，跟 diarize.py 現有 MFCC 特徵擷取的影格慣例一致
+# （FRAME_SEC=0.025／FRAME_HOP_SEC=0.010），比「判斷粒度需在 50ms 以內」的要求更嚴。
+ENERGY_FRAME_SEC = 0.020
+ENERGY_HOP_SEC = 0.010
+# 最短停留時間：兩軌能量接近時避免頻繁來回切換（chattering）。
+MIN_DWELL_SEC = 0.2
+# 切換點交叉淡化長度：硬切換結構性避免了多軌疊加造成的空洞感，
+# 但切換瞬間仍需要短暫淡入淡出來避免爆音，長度刻意壓短以降低可聞的相位混濁感。
+CROSSFADE_SEC = 0.03
+# 以上四個閾值都是初始值，尚未用真實會議聽感校準，跟 CONFIDENCE_THRESHOLD 一樣的處境，
+# 之後應依實際案例調整。
 
 
 def _ffmpeg():
@@ -153,19 +166,91 @@ def place_on_timeline(track_path: Path, offset_sec: float, total_duration_sec: f
     return output_wav
 
 
+def _short_time_energy(y: np.ndarray, sr: int, frame_sec: float, hop_sec: float) -> np.ndarray:
+    frame_len = max(1, int(frame_sec * sr))
+    hop_len = max(1, int(hop_sec * sr))
+    n_frames = max(1, (len(y) - frame_len) // hop_len + 1)
+    energy = np.empty(n_frames)
+    for i in range(n_frames):
+        start = i * hop_len
+        chunk = y[start:start + frame_len]
+        energy[i] = np.sqrt(np.mean(chunk.astype(np.float64) ** 2) + 1e-12)
+    return energy
+
+
+def _select_active_track(energies: np.ndarray, hop_sec: float, min_dwell_sec: float) -> np.ndarray:
+    """energies: (n_tracks, n_frames)，回傳每個影格選中的音軌 index。
+    套最短停留時間（遲滯判斷）：候選主軌換人時，要撐滿 min_dwell_sec 才真的切換，
+    避免兩軌能量接近時來回快速切換。"""
+    selection = np.argmax(energies, axis=0)
+    min_dwell_frames = max(1, round(min_dwell_sec / hop_sec))
+
+    current = selection[0]
+    since_switch = 0
+    smoothed = np.empty(len(selection), dtype=int)
+    for i, candidate in enumerate(selection):
+        if candidate != current and since_switch >= min_dwell_frames:
+            current = candidate
+            since_switch = 0
+        else:
+            since_switch += 1
+        smoothed[i] = current
+    return smoothed
+
+
 def mix_tracks(cleaned_wavs: list, output_wav: Path) -> Path:
+    """動態選軌混音：依各軌短時能量包絡，每個時刻挑目前最乾淨的一軌，硬切換＋交叉淡化。
+    取代原本 ffmpeg amix 單純疊加所有軌——疊加會讓同一聲源同時被多支麥克風收到、
+    夾帶不同聲學延遲，聽起來像梳狀濾波的空洞感；硬切換同一時刻只播放一軌，結構性避免這個問題。"""
     if len(cleaned_wavs) == 1:
         shutil.copy(cleaned_wavs[0], output_wav)
         return output_wav
 
-    ffmpeg = _ffmpeg()
-    n = len(cleaned_wavs)
-    cmd = [ffmpeg, "-y"]
+    signals = []
+    sr = None
     for wav in cleaned_wavs:
-        cmd += ["-i", str(wav)]
-    filter_complex = "".join(f"[{i}:a]" for i in range(n)) + f"amix=inputs={n}:duration=longest[aout]"
-    cmd += ["-filter_complex", filter_complex, "-map", "[aout]", str(output_wav)]
-    _run(cmd)
+        data, sr = sf.read(str(wav))
+        signals.append(data)
+    max_len = max(len(s) for s in signals)
+    tracks = np.zeros((len(signals), max_len))
+    for i, s in enumerate(signals):
+        tracks[i, :len(s)] = s
+
+    energies = np.stack([
+        _short_time_energy(tracks[i], sr, ENERGY_FRAME_SEC, ENERGY_HOP_SEC)
+        for i in range(len(signals))
+    ])
+    selection = _select_active_track(energies, ENERGY_HOP_SEC, MIN_DWELL_SEC)
+
+    hop_len = max(1, int(ENERGY_HOP_SEC * sr))
+    crossfade_len = max(1, int(CROSSFADE_SEC * sr))
+
+    switch_points = [0] + [
+        i * hop_len for i in range(1, len(selection)) if selection[i] != selection[i - 1]
+    ]
+    switch_points.append(max_len)
+
+    mixed = np.zeros(max_len)
+    for seg_start, seg_end in zip(switch_points[:-1], switch_points[1:]):
+        frame_idx = min(seg_start // hop_len, len(selection) - 1)
+        track_idx = selection[frame_idx]
+        mixed[seg_start:seg_end] = tracks[track_idx, seg_start:seg_end]
+
+    for cut in switch_points[1:-1]:
+        fade_start = max(0, cut - crossfade_len // 2)
+        fade_end = min(max_len, cut + crossfade_len // 2)
+        length = fade_end - fade_start
+        if length <= 0:
+            continue
+        prev_idx = selection[min(fade_start // hop_len, len(selection) - 1)]
+        next_idx = selection[min((fade_end - 1) // hop_len, len(selection) - 1)]
+        fade = np.linspace(0.0, 1.0, length)
+        mixed[fade_start:fade_end] = (
+            tracks[prev_idx, fade_start:fade_end] * (1 - fade)
+            + tracks[next_idx, fade_start:fade_end] * fade
+        )
+
+    sf.write(str(output_wav), mixed, sr)
     return output_wav
 
 
@@ -218,10 +303,22 @@ def _build_cluster(members: dict, tmp_dir: Path, idx: int, output_wav: Path) -> 
         place_on_timeline(p, offset, total_duration, aligned_wav)
         aligned.append(aligned_wav)
 
+    # 去殘響（多軌聯合）要在「原始未處理」的對齊訊號上做，因為 WPE 假設殘響訊號＝乾淨訊號
+    # 經房間脈衝響應線性捲積；如果先對每軌各自做動態增益這種非線性調整，會打亂多軌之間
+    # 估計共變異數/預測濾波器所依賴的線性關係。
+    dereverbed = [tmp_dir / f"c{idx}_track{i}_dereverb.wav" for i in range(len(aligned))]
+    dereverb_cluster(aligned, dereverbed)
+
+    gained = []
+    for i, wav in enumerate(dereverbed):
+        gained_wav = tmp_dir / f"c{idx}_track{i}_gain.wav"
+        dynamic_gain(wav, gained_wav)
+        gained.append(gained_wav)
+
     cleaned = []
-    for i, wav in enumerate(aligned):
+    for i, wav in enumerate(gained):
         cleaned_wav = tmp_dir / f"c{idx}_track{i}_clean.wav"
-        preprocess(wav, cleaned_wav)
+        reduce_ac_noise(wav, cleaned_wav)
         cleaned.append(cleaned_wav)
 
     return mix_tracks(cleaned, output_wav)

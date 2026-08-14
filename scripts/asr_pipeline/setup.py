@@ -114,7 +114,7 @@ def main():
     python = _venv_bin("python")
     print()
     print("設定完成。之後執行方式：")
-    print(f"  {python} phase1_pipeline.py --dir <週會資料夾> --date <yyyyMMdd>")
+    print(f"  {python} phase1_pipeline.py --dir <會議資料夾> --date <yyyyMMdd>")
 
 
 if __name__ == "__main__":

@@ -13,12 +13,11 @@ from align_mix import build_merged_recording, _ffmpeg, _ffprobe
 from diarize import diarize
 from transcribe import transcribe, DEFAULT_MODEL
 
-OWN_OUTPUT_SUFFIX = "_AppDevWeeklyMeeting.m4a"
+OWN_OUTPUT_SUFFIX = "_Meeting.m4a"
 DRAFT_HEADER = (
-    "【草稿，待確認】{name} 會議逐字稿\n"
-    "本檔案為語音辨識(ASR)直接輸出，尚未經過 AI 校對，可能包含辨識錯誤與專有名詞誤植。"
-    "請先貼進 Claude Code，套用 Keywords.txt／RulesAndRestricts.txt 的規則校對，"
-    "校對後再開放團隊訂正彙整定稿。\n\n"
+    "【AI 轉錄逐字稿，未經校對】{name}\n"
+    "本文件由語音辨識（ASR）自動產生，可能包含辨識錯誤、專有名詞誤植或語意不完整之處，"
+    "僅供輔助參考，正式引用前請自行核實內容。\n\n"
 )
 
 
@@ -98,7 +97,7 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
         skip_asr: bool = False, skip_align: bool = False) -> tuple:
     output_dir = output_dir or input_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{date}_AppDevWeeklyMeeting"
+    stem = f"{date}_Meeting"
 
     if not skip_asr:
         model_thread = threading.Thread(target=ensure_model_ready, daemon=True)
@@ -141,13 +140,13 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", required=True, help="週會資料夾路徑，內含當週原始多軌 *.m4a")
+    parser.add_argument("--dir", required=True, help="會議資料夾路徑，內含該場會議原始多軌 *.m4a")
     parser.add_argument("--date", required=True, help="會議日期，格式 yyyyMMdd")
     parser.add_argument("--outdir", default=None, help="輸出資料夾，預設與 --dir 相同")
     parser.add_argument("--yes", action="store_true", help="略過檔案清單確認提示")
     parser.add_argument("--skip-asr", action="store_true", help="混音完成後就停止，不執行分段偵測與 ASR 轉錄")
     parser.add_argument("--skip-align", action="store_true",
-                         help="沿用已存在的 {date}_AppDevWeeklyMeeting.m4a，跳過對齊混音，只重跑分段偵測與 ASR 轉錄")
+                         help="沿用已存在的 {date}_Meeting.m4a，跳過對齊混音，只重跑分段偵測與 ASR 轉錄")
     args = parser.parse_args()
 
     m4a_result, txt_result = run(

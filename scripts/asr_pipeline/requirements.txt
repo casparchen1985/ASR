@@ -5,3 +5,4 @@ numpy>=1.24.0
 opencc-python-reimplemented>=0.1.7
 scipy>=1.7.0
 tokenizers<0.21  # 0.21.0+ 沒有 Python 3.8 的預編譯 wheel，會嘗試從原始碼編譯（需要 Rust），改鎖在有 wheel 的版本
+nara-wpe>=0.0.11  # 多軌聯合去殘響（WPE）；純 numpy 實作，install_requires 不含 torch/tensorflow
