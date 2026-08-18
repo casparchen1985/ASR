@@ -34,12 +34,34 @@ ENERGY_HOP_SEC = 0.010
 # 沒有任何一軌達標就視為沒人講話、不切換，避免停頓時純粹雜訊底高低差異觸發切換
 # （2026-08-14 實測發現：不做這層判斷會導致一直聽到背景雜訊忽大忽小）。
 SILENCE_MARGIN_RATIO = 2.0
-# 最短停留時間：兩軌能量接近時避免頻繁來回切換（chattering）。
-MIN_DWELL_SEC = 0.2
+# 判斷「這段發言結束了」的停頓長度：短於此門檻的靜音視為同一段發言內部的換氣停頓／字詞間隙，
+# 不算邊界；只有停頓夠長才視為換人講話或換發言的邊界，同一段發言內固定選同一軌
+# （2026-08-17 需求：逐影格切換太細，同一人講話過程中換氣瞬間能量波動就可能切到別軌雜訊底，
+# 造成背景雜訊忽大忽小；改成整段發言鎖定同一軌）。
+SEGMENT_GAP_SEC = 0.7
 # 切換點交叉淡化長度：硬切換結構性避免了多軌疊加造成的空洞感，
 # 但切換瞬間仍需要短暫淡入淡出來避免爆音，長度刻意壓短以降低可聞的相位混濁感。
 CROSSFADE_SEC = 0.03
-# 以上四個閾值都是初始值，尚未用真實會議聽感校準，跟 CONFIDENCE_THRESHOLD 一樣的處境，
+
+# 主／從音軌判斷用的加權分數組成：音量與 SNR 各半（2026-08-17 決策）。
+# 兩者都刻意用「去殘響後、增益前」（dereverbed）的訊號計算，不能用增益後的訊號——
+# dynamic_gain() 的工作目的就是把各時段拉到目標響度，會把音量差異本身抹平，
+# 拿增益後的訊號比較「誰原本比較大聲/清晰」會失真。原本另外提案的「加工增益值」
+# 指標因此也不需要了：增益前音量已經是同一件事的直接量測，不用再算一次增益量。
+VOLUME_WEIGHT = 0.5
+SNR_WEIGHT = 0.5
+# 判斷「這是真的插話/回應、不是雜訊或洩漏波動」的最短持續時間：同一個發言段內，
+# 某個非主軌的分數短暫超過主軌，如果持續不到這個長度，視為雜訊波動或洩漏音，不疊加。
+MIN_OVERLAY_SEC = 0.3
+# 疊加插話片段前的局部微調對齊：用插話片段前一小段「只有主軌在講話」的內容
+# （這段內容多少會被從軌麥克風洩漏收到）重新比對局部延遲殘差，修正裝置間
+# 可能累積的時脈漂移；LOCAL_REALIGN_SEARCH_SEC 是搜尋範圍，找到的偏移量本身
+# 精度是取樣點級（遠優於 2ms 的目標），但只有殘餘漂移落在搜尋範圍內才找得到。
+LOCAL_REALIGN_SEARCH_SEC = 0.05
+LOCAL_REALIGN_CONTEXT_SEC = 1.0
+# 從軌疊加時的音量平衡上限（線性倍率），避免疊加片段前後過於安靜導致增益計算暴衝。
+MAX_OVERLAY_GAIN = 3.0
+# 以上七個閾值都是初始值，尚未用真實會議聽感校準，跟 CONFIDENCE_THRESHOLD 一樣的處境，
 # 之後應依實際案例調整。
 
 
@@ -182,78 +204,210 @@ def _short_time_energy(y: np.ndarray, sr: int, frame_sec: float, hop_sec: float)
     return energy
 
 
-def _select_active_track(energies: np.ndarray, hop_sec: float, min_dwell_sec: float) -> np.ndarray:
-    """energies: (n_tracks, n_frames)，回傳每個影格選中的音軌 index。
+def _to_db(x: np.ndarray) -> np.ndarray:
+    return 20.0 * np.log10(np.maximum(x, 1e-12))
 
-    沒人講話的時候（所有軌都只有各自的殘留雜訊底）不切換：純粹比較能量會導致停頓時
-    在不同軌的雜訊特性之間跳來跳去，聽起來像背景雜訊忽大忽小。做法是先估計每一軌自己的
-    雜訊底（該軌能量的低百分位數），只有能量明顯高於自己雜訊底（SILENCE_MARGIN_RATIO 倍）
-    才視為「這一刻真的有人講話」，候選名單只從這些「活躍」的軌裡面選；如果當下沒有任何一軌
-    活躍，維持原本選的軌，不切換。
 
-    套最短停留時間（遲滯判斷）：候選主軌換人時，要撐滿 min_dwell_sec 才真的切換，
-    避免兩軌能量接近時來回快速切換。"""
+def _minmax_normalize(values: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """把 values 正規化到 0~1，範圍由 mask 為 True 的值決定（讓沒人講話的極端值不拉大範圍）。
+    正規化要跨軌一起做（同一個 min/max），不能每軌各自正規化——每軌各自正規化會把
+    軌間本來就想比較的音量/SNR 差異洗掉，只留下每軌自己時間上的相對高低，失去比較主從的意義。"""
+    if not mask.any():
+        return np.zeros_like(values)
+    pool = values[mask]
+    lo, hi = pool.min(), pool.max()
+    if hi - lo < 1e-9:
+        return np.full_like(values, 0.5)
+    return np.clip((values - lo) / (hi - lo), 0.0, 1.0)
+
+
+def _compute_scores(decision_tracks: np.ndarray, sr: int) -> tuple:
+    """decision_tracks: (n_tracks, n_samples)，用「去殘響後、增益前」的訊號算主從判斷分數。
+
+    回傳 (is_active, score)，皆為 (n_tracks, n_frames)。score 是音量與 SNR 正規化後
+    依 VOLUME_WEIGHT/SNR_WEIGHT 加權加總的結果，用來決定同一時刻哪一軌收音比較好。"""
+    energies = np.stack([
+        _short_time_energy(decision_tracks[i], sr, ENERGY_FRAME_SEC, ENERGY_HOP_SEC)
+        for i in range(len(decision_tracks))
+    ])
     noise_floor = np.percentile(energies, 20, axis=1, keepdims=True)
     is_active = energies > noise_floor * SILENCE_MARGIN_RATIO
 
-    min_dwell_frames = max(1, round(min_dwell_sec / hop_sec))
+    volume_db = _to_db(energies)
+    snr_db = _to_db(energies / (noise_floor + 1e-12))
 
-    current = int(np.argmax(energies[:, 0]))
-    since_switch = 0
-    smoothed = np.empty(energies.shape[1], dtype=int)
-    for i in range(energies.shape[1]):
-        active_idx = np.where(is_active[:, i])[0]
-        if len(active_idx) == 0:
-            smoothed[i] = current
-            since_switch += 1
+    volume_norm = _minmax_normalize(volume_db, is_active)
+    snr_norm = _minmax_normalize(snr_db, is_active)
+
+    score = VOLUME_WEIGHT * volume_norm + SNR_WEIGHT * snr_norm
+    return is_active, score
+
+
+def _find_islands(any_active: np.ndarray, hop_sec: float, gap_sec: float) -> list:
+    """把 any_active（任一軌活躍的影格）依 SEGMENT_GAP_SEC 分段邏輯切成發言段清單
+    [(start_frame, end_frame), ...]，停頓短於 gap_sec 併入同一段，見 SEGMENT_GAP_SEC 說明。"""
+    gap_frames = max(1, round(gap_sec / hop_sec))
+    n = len(any_active)
+    islands = []
+    i = 0
+    while i < n:
+        if not any_active[i]:
+            i += 1
             continue
-        candidate = int(active_idx[np.argmax(energies[active_idx, i])])
-        if candidate != current and since_switch >= min_dwell_frames:
-            current = candidate
-            since_switch = 0
-        else:
-            since_switch += 1
-        smoothed[i] = current
-    return smoothed
+        start = i
+        last_active = i
+        j = i + 1
+        while j < n and (any_active[j] or j - last_active <= gap_frames):
+            if any_active[j]:
+                last_active = j
+            j += 1
+        islands.append((start, last_active + 1))
+        i = j
+    return islands
 
 
-def mix_tracks(cleaned_wavs: list, output_wav: Path) -> Path:
-    """動態選軌混音：依各軌短時能量包絡，每個時刻挑目前最乾淨的一軌，硬切換＋交叉淡化。
-    取代原本 ffmpeg amix 單純疊加所有軌——疊加會讓同一聲源同時被多支麥克風收到、
-    夾帶不同聲學延遲，聽起來像梳狀濾波的空洞感；硬切換同一時刻只播放一軌，結構性避免這個問題。"""
-    if len(cleaned_wavs) == 1:
-        shutil.copy(cleaned_wavs[0], output_wav)
+def _plan_track_selection(is_active: np.ndarray, score: np.ndarray, hop_sec: float,
+                           segment_gap_sec: float, min_overlay_sec: float) -> tuple:
+    """回傳 (master_selection, overlay_spans)。
+
+    master_selection：每個影格的主軌 index（長度 n_frames），決定混音的「底」放哪一軌——
+    以發言段（island）為單位鎖定，段內用整段加權分數加總決定主軌，避免逐影格切換造成的
+    背景雜訊忽大忽小（沿用 SEGMENT_GAP_SEC 的分段邏輯）。
+
+    overlay_spans：[(start_frame, end_frame, track_idx), ...]，發言段內某個非主軌片刻的
+    分數超過主軌、且持續夠久（>= min_overlay_sec，排除短暫雜訊或洩漏波動）的區段，
+    代表插話／回應，之後疊加（不取代）到主軌上。"""
+    n_tracks, n_frames = score.shape
+    any_active = is_active.any(axis=0)
+    islands = _find_islands(any_active, hop_sec, segment_gap_sec)
+
+    master_selection = np.empty(n_frames, dtype=int)
+    overlay_spans = []
+    min_overlay_frames = max(1, round(min_overlay_sec / hop_sec))
+
+    current = int(np.argmax(score[:, 0])) if n_frames else 0
+    prev_end = 0
+    for start, end in islands:
+        master_selection[prev_end:start] = current  # 發言段之間的靜音維持原本選的軌，不切換
+        island_active = is_active[:, start:end]
+        island_score = np.where(island_active, score[:, start:end], 0.0).sum(axis=1)
+        master = int(np.argmax(island_score))
+        master_selection[start:end] = master
+        current = master
+
+        # 每個影格在「活躍的軌」裡分數最高的是誰；master 本身活躍且分數最高時就是 master 自己，
+        # 差一步就代表這一刻的插話/回應比主軌當下的收音更好。
+        masked_score = np.where(island_active, score[:, start:end], -np.inf)
+        frame_winner = np.argmax(masked_score, axis=0)
+        frame_winner = np.where(island_active.any(axis=0), frame_winner, master)
+
+        run_track, run_start = master, 0
+        island_len = end - start
+        for f in range(island_len + 1):
+            track_here = frame_winner[f] if f < island_len else master
+            if track_here == run_track:
+                continue
+            if run_track != master and f - run_start >= min_overlay_frames:
+                overlay_spans.append((start + run_start, start + f, int(run_track)))
+            run_track, run_start = track_here, f
+
+        prev_end = end
+
+    master_selection[prev_end:] = current
+    return master_selection, overlay_spans
+
+
+def _local_realign_samples(master: np.ndarray, secondary: np.ndarray, sr: int,
+                            span_start: int) -> int:
+    """疊加插話片段前的局部微調對齊：用插話片段前一小段「只有主軌在講話」的內容
+    （這段內容多少會被從軌麥克風洩漏收到，只是比較小聲）重新比對局部延遲殘差，
+    修正裝置間可能累積的時脈漂移。信心不足（洩漏太弱、比對不出明顯尖峰）就不修正，
+    回傳 0，沿用既有的全域對齊結果。"""
+    search = int(LOCAL_REALIGN_SEARCH_SEC * sr)
+    context = int(LOCAL_REALIGN_CONTEXT_SEC * sr)
+    ctx_start = max(0, span_start - context)
+    ref = master[ctx_start:span_start]
+    tgt = secondary[ctx_start:span_start]
+    if len(ref) < search * 2 or len(tgt) < search * 2:
+        return 0
+
+    corr = correlate(ref, tgt, mode="full")
+    mid = len(corr) // 2
+    lo, hi = max(0, mid - search), min(len(corr), mid + search + 1)
+    window = corr[lo:hi]
+    if len(window) == 0:
+        return 0
+
+    local_best = int(np.argmax(window))
+    peak = window[local_best]
+    baseline = np.median(corr)
+    spread = np.std(corr) + 1e-9
+    confidence = float((peak - baseline) / spread)
+    if confidence < CONFIDENCE_THRESHOLD:
+        return 0
+    return (lo + local_best) - mid
+
+
+def mix_tracks(decision_wavs: list, output_wavs: list, output_wav: Path, track_names: list = None) -> Path:
+    """動態選軌混音：以「一段發言」為單位鎖定主軌（硬切換＋交叉淡化，取代 ffmpeg amix 疊加
+    造成的梳狀濾波空洞感），發言段內偵測其他軌插話／回應並疊加（不取代）進主軌
+    （2026-08-17 決策：人聲重疊改為軟體處理，見 README「主從音軌與插話疊加」）。
+
+    decision_wavs：去殘響後、增益前的訊號，只用來算音量／SNR 分數判斷主從，不直接輸出——
+    dynamic_gain() 的目的就是抹平音量差異，拿增益後的訊號比較「誰原本比較清晰」會失真。
+    output_wavs：完整處理過（增益＋降噪）的訊號，實際混音輸出用這份內容。
+    兩者一一對應、時間軸完全相同（增益/降噪都不改變取樣點位置，只改振幅）。
+    track_names：只用於印出診斷訊息時標示原始檔名，不影響混音結果，省略時用軌 index 代替。"""
+    if len(decision_wavs) == 1:
+        shutil.copy(output_wavs[0], output_wav)
         return output_wav
 
-    signals = []
-    sr = None
-    for wav in cleaned_wavs:
-        data, sr = sf.read(str(wav))
-        signals.append(data)
-    max_len = max(len(s) for s in signals)
-    tracks = np.zeros((len(signals), max_len))
-    for i, s in enumerate(signals):
-        tracks[i, :len(s)] = s
+    names = track_names or [str(i) for i in range(len(decision_wavs))]
 
-    energies = np.stack([
-        _short_time_energy(tracks[i], sr, ENERGY_FRAME_SEC, ENERGY_HOP_SEC)
-        for i in range(len(signals))
-    ])
-    selection = _select_active_track(energies, ENERGY_HOP_SEC, MIN_DWELL_SEC)
+    decision_signals, output_signals = [], []
+    sr = None
+    for dw, ow in zip(decision_wavs, output_wavs):
+        d, sr = sf.read(str(dw))
+        o, _ = sf.read(str(ow))
+        decision_signals.append(d)
+        output_signals.append(o)
+
+    max_len = max(len(s) for s in decision_signals)
+    decision_tracks = np.zeros((len(decision_signals), max_len))
+    output_tracks = np.zeros((len(output_signals), max_len))
+    for i, (d, o) in enumerate(zip(decision_signals, output_signals)):
+        decision_tracks[i, :len(d)] = d
+        output_tracks[i, :len(o)] = o
+
+    is_active, score = _compute_scores(decision_tracks, sr)
+    master_selection, overlay_spans = _plan_track_selection(
+        is_active, score, ENERGY_HOP_SEC, SEGMENT_GAP_SEC, MIN_OVERLAY_SEC,
+    )
+
+    if overlay_spans:
+        print(f"=== 偵測到 {len(overlay_spans)} 段插話/回應，已疊加進主軌（不是取代）===")
+        for s, e, tr in overlay_spans:
+            start_sec = s * ENERGY_HOP_SEC
+            dur_sec = (e - s) * ENERGY_HOP_SEC
+            master_idx = master_selection[s]
+            print(f"  {start_sec/60:6.1f} 分鐘處，持續 {dur_sec:4.1f} 秒："
+                  f"主軌 {names[master_idx]} 疊加 {names[tr]} 的插話")
+    else:
+        print("=== 這場錄音沒有偵測到符合 MIN_OVERLAY_SEC 門檻的插話/回應 ===")
 
     hop_len = max(1, int(ENERGY_HOP_SEC * sr))
     crossfade_len = max(1, int(CROSSFADE_SEC * sr))
 
     switch_points = [0] + [
-        i * hop_len for i in range(1, len(selection)) if selection[i] != selection[i - 1]
+        i * hop_len for i in range(1, len(master_selection)) if master_selection[i] != master_selection[i - 1]
     ]
     switch_points.append(max_len)
 
     mixed = np.zeros(max_len)
     for seg_start, seg_end in zip(switch_points[:-1], switch_points[1:]):
-        frame_idx = min(seg_start // hop_len, len(selection) - 1)
-        track_idx = selection[frame_idx]
-        mixed[seg_start:seg_end] = tracks[track_idx, seg_start:seg_end]
+        frame_idx = min(seg_start // hop_len, len(master_selection) - 1)
+        track_idx = master_selection[frame_idx]
+        mixed[seg_start:seg_end] = output_tracks[track_idx, seg_start:seg_end]
 
     for cut in switch_points[1:-1]:
         fade_start = max(0, cut - crossfade_len // 2)
@@ -261,13 +415,33 @@ def mix_tracks(cleaned_wavs: list, output_wav: Path) -> Path:
         length = fade_end - fade_start
         if length <= 0:
             continue
-        prev_idx = selection[min(fade_start // hop_len, len(selection) - 1)]
-        next_idx = selection[min((fade_end - 1) // hop_len, len(selection) - 1)]
+        prev_idx = master_selection[min(fade_start // hop_len, len(master_selection) - 1)]
+        next_idx = master_selection[min((fade_end - 1) // hop_len, len(master_selection) - 1)]
         fade = np.linspace(0.0, 1.0, length)
         mixed[fade_start:fade_end] = (
-            tracks[prev_idx, fade_start:fade_end] * (1 - fade)
-            + tracks[next_idx, fade_start:fade_end] * fade
+            output_tracks[prev_idx, fade_start:fade_end] * (1 - fade)
+            + output_tracks[next_idx, fade_start:fade_end] * fade
         )
+
+    for span_start_frame, span_end_frame, track_idx in overlay_spans:
+        sample_start = span_start_frame * hop_len
+        sample_end = min(span_end_frame * hop_len, max_len)
+        if sample_end <= sample_start:
+            continue
+        master_idx = master_selection[span_start_frame]
+        shift = _local_realign_samples(output_tracks[master_idx], output_tracks[track_idx], sr, sample_start)
+
+        secondary_start = max(0, sample_start + shift)
+        length = min(sample_end - sample_start, max_len - secondary_start)
+        if length <= 0:
+            continue
+        secondary_clip = output_tracks[track_idx, secondary_start:secondary_start + length]
+        master_clip = mixed[sample_start:sample_start + length]
+
+        target_rms = np.sqrt(np.mean(master_clip.astype(np.float64) ** 2) + 1e-12)
+        clip_rms = np.sqrt(np.mean(secondary_clip.astype(np.float64) ** 2) + 1e-12)
+        balance_gain = min(target_rms / clip_rms, MAX_OVERLAY_GAIN) if clip_rms > 1e-9 else 0.0
+        mixed[sample_start:sample_start + length] += secondary_clip * balance_gain
 
     sf.write(str(output_wav), mixed, sr)
     return output_wav
@@ -340,7 +514,7 @@ def _build_cluster(members: dict, tmp_dir: Path, idx: int, output_wav: Path) -> 
         reduce_ac_noise(wav, cleaned_wav)
         cleaned.append(cleaned_wav)
 
-    return mix_tracks(cleaned, output_wav)
+    return mix_tracks(dereverbed, cleaned, output_wav, track_names=[p.name for p in members])
 
 
 def _concat_wavs(wav_paths: list, output_wav: Path) -> Path:
