@@ -115,6 +115,7 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
         tracks = discover_tracks(input_dir)
         confirm_tracks(tracks, assume_yes)
         build_merged_recording(tracks, merged_m4a)
+        print(f"=== 混音完畢，已產出合併錄音：{merged_m4a} ===")
 
     if skip_asr:
         return merged_m4a, None
