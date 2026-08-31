@@ -70,7 +70,16 @@ def decode_to_wav(m4a_path: Path, wav_path: Path) -> Path:
     return wav_path
 
 
+def format_timestamp(seconds: float) -> str:
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def group_into_paragraphs(asr_segments: list, speaker_segments: list) -> list:
+    """回傳 [(start_seconds, text), ...]，start_seconds 是該段落第一句話在合併錄音裡的時間，
+    用來在逐字稿標時間軸標記，讓讀者知道這段文字對應音檔的哪個時間點。"""
     def speaker_index(t):
         for i, (start, end) in enumerate(speaker_segments):
             if start <= t < end:
@@ -80,16 +89,19 @@ def group_into_paragraphs(asr_segments: list, speaker_segments: list) -> list:
     paragraphs = []
     current_speaker = None
     current_lines = []
+    current_start = None
     for seg in asr_segments:
         midpoint = (seg["start"] + seg["end"]) / 2
         spk = speaker_index(midpoint)
         if spk != current_speaker and current_lines:
-            paragraphs.append("".join(current_lines))
+            paragraphs.append((current_start, "".join(current_lines)))
             current_lines = []
+        if not current_lines:
+            current_start = seg["start"]
         current_speaker = spk
         current_lines.append(seg["text"])
     if current_lines:
-        paragraphs.append("".join(current_lines))
+        paragraphs.append((current_start, "".join(current_lines)))
     return paragraphs
 
 
@@ -129,7 +141,7 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
         asr_segments = transcribe(merged_wav)
 
     paragraphs = group_into_paragraphs(asr_segments, speaker_segments)
-    raw_text = "\n\n".join(paragraphs)
+    raw_text = "\n\n".join(f"[{format_timestamp(start)}] {text}" for start, text in paragraphs)
 
     # AI 校對改為人工貼進 Claude Code 執行（沒有 Anthropic Console/API 計費權限，只有 Claude Team），
     # 這裡只輸出 ASR 原始結果
