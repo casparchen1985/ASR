@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from align_mix import build_merged_recording, _ffmpeg, _ffprobe
 from diarize import diarize
 from transcribe import transcribe, DEFAULT_MODEL
+from log_util import log
 
 OWN_OUTPUT_SUFFIX = "_Meeting.m4a"
 DRAFT_HEADER = (
@@ -39,7 +40,7 @@ def get_duration_seconds(path: Path) -> float:
 
 
 def confirm_tracks(tracks: list, assume_yes: bool) -> None:
-    print(f"掃描到 {len(tracks)} 個原始音軌檔：")
+    log(f"掃描到 {len(tracks)} 個原始音軌檔：")
     for t in tracks:
         try:
             duration = get_duration_seconds(t)
@@ -122,12 +123,12 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
         # 這類跟對齊無關的更新，重跑一次已經對好的合併錄音即可，不需要重新對齊
         if not merged_m4a.exists():
             raise RuntimeError(f"--skip-align 需要已存在的合併錄音檔：{merged_m4a}")
-        print(f"沿用既有合併錄音，跳過對齊混音：{merged_m4a}")
+        log(f"沿用既有合併錄音，跳過對齊混音：{merged_m4a}")
     else:
         tracks = discover_tracks(input_dir)
         confirm_tracks(tracks, assume_yes)
         build_merged_recording(tracks, merged_m4a)
-        print(f"=== 混音完畢，已產出合併錄音：{merged_m4a} ===")
+        log(f"=== 混音完畢，已產出合併錄音：{merged_m4a} ===")
 
     if skip_asr:
         return merged_m4a, None
@@ -135,9 +136,11 @@ def run(input_dir: Path, date: str, output_dir: Path = None, assume_yes: bool = 
     with tempfile.TemporaryDirectory() as tmp:
         merged_wav = decode_to_wav(merged_m4a, Path(tmp) / "merged.wav")
 
+        log("=== 開始語者分段 ===")
         speaker_segments = diarize(merged_wav)
 
         model_thread.join()  # 確保模型已就緒（已快取的話這裡幾乎不用等）
+        log("=== 開始 ASR 轉錄 ===")
         asr_segments = transcribe(merged_wav)
 
     paragraphs = group_into_paragraphs(asr_segments, speaker_segments)

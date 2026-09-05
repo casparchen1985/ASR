@@ -9,6 +9,9 @@ from nara_wpe.wpe import wpe
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+sys.path.insert(0, str(Path(__file__).parent))
+from log_util import log
+
 # STFT 參數依取樣率從 nara_wpe 官方範例（16kHz, size=512/shift=128）等比例換算到 32kHz，
 # 維持相同的時間解析度（32ms 窗／8ms 跳動）。
 STFT_SIZE = 1024
@@ -79,15 +82,18 @@ def dereverb_cluster(aligned_wavs: list, output_wavs: list) -> list:
     chunk_len = int(CHUNK_SEC * sr)
     overlap = int(OVERLAP_SEC * sr)
     step = chunk_len - overlap
+    total_min = max_len / sr / 60
 
     if max_len <= chunk_len:
         z = _dereverb_chunk(y)
+        log(f"去殘響進度：{total_min:5.1f} 分鐘 / {total_min:5.1f} 分鐘")
     else:
         pieces = []
         start = 0
         while True:
             end = min(start + chunk_len, max_len)
             pieces.append((start, end, _dereverb_chunk(y[:, start:end])))
+            log(f"去殘響進度：{end / sr / 60:5.1f} 分鐘 / {total_min:5.1f} 分鐘")
             if end == max_len:
                 break
             start += step

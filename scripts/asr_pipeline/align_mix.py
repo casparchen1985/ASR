@@ -15,6 +15,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).parent))
 from preprocess import dynamic_gain, reduce_ac_noise, normalize_loudness, SAMPLE_RATE
 from dereverb import dereverb_cluster
+from log_util import log
 
 QUERY_SEC = 300          # 用來搜尋位置的查詢片段長度上限（取自每一軌開頭）
 SEARCH_SR = 2000         # 粗略定位搜尋用的低取樣率，只影響搜尋速度，不影響最終混音音質
@@ -385,7 +386,7 @@ def mix_tracks(decision_wavs: list, output_wavs: list, output_wav: Path, track_n
     )
 
     if overlay_spans:
-        print(f"=== 偵測到 {len(overlay_spans)} 段插話/回應，已疊加進主軌（不是取代）===")
+        log(f"=== 偵測到 {len(overlay_spans)} 段插話/回應，已疊加進主軌（不是取代）===")
         for s, e, tr in overlay_spans:
             start_sec = s * ENERGY_HOP_SEC
             dur_sec = (e - s) * ENERGY_HOP_SEC
@@ -393,7 +394,7 @@ def mix_tracks(decision_wavs: list, output_wavs: list, output_wav: Path, track_n
             print(f"  {start_sec/60:6.1f} 分鐘處，持續 {dur_sec:4.1f} 秒："
                   f"主軌 {names[master_idx]} 疊加 {names[tr]} 的插話")
     else:
-        print("=== 這場錄音沒有偵測到符合 MIN_OVERLAY_SEC 門檻的插話/回應 ===")
+        log("=== 這場錄音沒有偵測到符合 MIN_OVERLAY_SEC 門檻的插話/回應 ===")
 
     hop_len = max(1, int(ENERGY_HOP_SEC * sr))
     crossfade_len = max(1, int(CROSSFADE_SEC * sr))
@@ -447,6 +448,24 @@ def mix_tracks(decision_wavs: list, output_wavs: list, output_wav: Path, track_n
     return output_wav
 
 
+def _bidirectional_offset(a: Path, b: Path) -> tuple:
+    """比對 a、b 兩軌，回傳 (offset_of_b_relative_to_a, confidence)。offset 可能是負值，
+    代表 b 比 a 早開始錄。
+
+    互相關固定取「target」開頭 QUERY_SEC 秒當查詢片段去搜尋「reference」全長；如果查詢片段
+    開頭剛好混到裝置擺放/開機雜音等在另一軌根本不存在的內容（因為另一軌那時還沒開始錄），
+    這個方向的信心值會被拖低，但這只是「誰被選為查詢片段」的運氣問題，不代表兩軌內容真的
+    沒重疊。兩個方向都算一次，取信心較高的方向，避免單一方向沒選對就誤判成不重疊
+    （2026-09-05 實際案例：兩軌其實同時錄音、僅相差數秒開機時間，但固定用時長較長的一軌
+    當 reference 那個方向信心值 7.23，低於門檻；反過來是 85.58，證實有重疊）。
+    """
+    offset_ab, conf_ab = locate_offset_seconds(a, b)
+    offset_ba, conf_ba = locate_offset_seconds(b, a)
+    if conf_ab >= conf_ba:
+        return refine_offset_seconds(a, b, offset_ab), conf_ab
+    return -refine_offset_seconds(b, a, offset_ba), conf_ba
+
+
 def _find_clusters(track_paths: list) -> list:
     """把輸入軌分群：同一群內彼此聲音內容有重疊、可以互相對齊；群跟群之間視為時間軸上互不重疊
     （例如裝置中途沒電、換另一台裝置接手錄）。
@@ -465,11 +484,19 @@ def _find_clusters(track_paths: list) -> list:
     for p in track_paths:
         if p == anchor:
             continue
-        offset, confidence = locate_offset_seconds(anchor, p)
+        offset, confidence = _bidirectional_offset(anchor, p)
         if confidence >= CONFIDENCE_THRESHOLD:
-            members[p] = refine_offset_seconds(anchor, p, offset)
+            members[p] = offset
         else:
             remaining.append(p)
+
+    if len(members) > 1:
+        earliest = min(members.values())
+        if earliest < 0:
+            # anchor 是依時長挑選，不保證是群內最早開始錄的那一軌；有成員比 anchor 早開始時
+            # offset 會是負值，place_on_timeline() 會把負偏移直接夾到 0，等於把該軌錯誤地
+            # 往後移，因此這裡整群一起位移，讓最早開始的那一軌對齊到 0。
+            members = {p: off - earliest for p, off in members.items()}
 
     clusters = [(anchor, members)]
     if remaining:
@@ -481,7 +508,7 @@ def _cluster_sort_key(cluster: tuple):
     anchor, _members = cluster
     serial = extract_serial_number(anchor)
     if serial is None:
-        print(f"警告：{anchor.name} 檔名裡找不到序號，接續順序退回用檔名字母排序，可能不正確，建議人工確認。")
+        log(f"警告：{anchor.name} 檔名裡找不到序號，接續順序退回用檔名字母排序，可能不正確，建議人工確認。")
         return (1, anchor.name)
     return (0, serial)
 
@@ -490,6 +517,7 @@ def _build_cluster(members: dict, tmp_dir: Path, idx: int, output_wav: Path) -> 
     durations = {p: get_duration_seconds(p) for p in members}
     total_duration = max(offset + durations[p] for p, offset in members.items())
 
+    log(f"=== [群 {idx}] 對齊置入時間軸 ===")
     aligned = []
     for i, (p, offset) in enumerate(members.items()):
         aligned_wav = tmp_dir / f"c{idx}_track{i}_aligned.wav"
@@ -499,21 +527,25 @@ def _build_cluster(members: dict, tmp_dir: Path, idx: int, output_wav: Path) -> 
     # 去殘響（多軌聯合）要在「原始未處理」的對齊訊號上做，因為 WPE 假設殘響訊號＝乾淨訊號
     # 經房間脈衝響應線性捲積；如果先對每軌各自做動態增益這種非線性調整，會打亂多軌之間
     # 估計共變異數/預測濾波器所依賴的線性關係。
+    log(f"=== [群 {idx}] 開始去殘響（WPE，耗時最長的步驟）===")
     dereverbed = [tmp_dir / f"c{idx}_track{i}_dereverb.wav" for i in range(len(aligned))]
     dereverb_cluster(aligned, dereverbed)
 
+    log(f"=== [群 {idx}] 開始動態增益 ===")
     gained = []
     for i, wav in enumerate(dereverbed):
         gained_wav = tmp_dir / f"c{idx}_track{i}_gain.wav"
         dynamic_gain(wav, gained_wav)
         gained.append(gained_wav)
 
+    log(f"=== [群 {idx}] 開始降噪 ===")
     cleaned = []
     for i, wav in enumerate(gained):
         cleaned_wav = tmp_dir / f"c{idx}_track{i}_clean.wav"
         reduce_ac_noise(wav, cleaned_wav)
         cleaned.append(cleaned_wav)
 
+    log(f"=== [群 {idx}] 開始動態選軌混音 ===")
     return mix_tracks(dereverbed, cleaned, output_wav, track_names=[p.name for p in members])
 
 
@@ -536,24 +568,27 @@ def build_merged_recording(track_paths: list, output_m4a: Path) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
 
+        log(f"=== 開始對齊 {len(track_paths)} 軌 ===")
         clusters = _find_clusters(track_paths)
+        log(f"=== 對齊完成，共分成 {len(clusters)} 群 ===")
         order = sorted(range(len(clusters)), key=lambda i: _cluster_sort_key(clusters[i]))
 
         cluster_wavs = []
         for idx in order:
             _anchor, members = clusters[idx]
             cluster_wav = tmp_dir / f"cluster{idx}.wav"
+            log(f"=== 開始處理群組 {idx}（{len(members)} 軌）===")
             _build_cluster(members, tmp_dir, idx, cluster_wav)
             cluster_wavs.append(cluster_wav)
 
         if len(cluster_wavs) > 1:
-            print("=== 偵測到錄音無法完全對齊，判定為多段接續（例如裝置中途沒電、換手繼續錄），"
-                  "依檔名序號接續，中間不補靜音 ===")
+            log("=== 偵測到錄音無法完全對齊，判定為多段接續（例如裝置中途沒電、換手繼續錄），"
+                "依檔名序號接續，中間不補靜音 ===")
             cumulative = 0.0
             for i, wav in enumerate(cluster_wavs):
                 dur = get_duration_seconds(wav)
                 if i > 0:
-                    print(f"接續點：合併後音檔第 {cumulative:.1f} 秒（約 {cumulative / 60:.1f} 分鐘）處接上下一段")
+                    log(f"接續點：合併後音檔第 {cumulative:.1f} 秒（約 {cumulative / 60:.1f} 分鐘）處接上下一段")
                 cumulative += dur
 
         merged_wav = tmp_dir / "merged_clusters.wav"
