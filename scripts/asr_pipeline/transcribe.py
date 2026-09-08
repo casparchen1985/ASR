@@ -88,8 +88,17 @@ def transcribe(audio_path: Path, model_size: str = DEFAULT_MODEL, cpu_threads: i
 
     # Whisper 的 "zh" 解碼預設輸出簡體字，即使音檔是台灣國語也一樣，
     # 因此每個 segment 都要過一次 OpenCC 轉繁體（含台灣慣用詞）
+    #
+    # condition_on_previous_text / hallucination_silence_threshold：2026-09-04 週會實測發現，
+    # 會議剛開始、人聲還不清楚（入座、交談雜訊）的那幾十秒，Whisper 幻覺出「請點讚訂閱分享」
+    # 這類樣板句，且預設會把幻覺文字當上文餵給下一段解碼，導致同一句幻覺連續刷了兩分半才被
+    # 真正清楚的語音打斷。關掉 condition_on_previous_text 避免幻覺自我延續；
+    # hallucination_silence_threshold 另外針對「幻覺前有一段靜音」這種情況跳過重試，
+    # 依官方文件需要 word_timestamps=True 才會生效（見 README「已知限制」的效能提醒）。
     segments, info = model.transcribe(
         str(audio_path), language="zh", vad_filter=True, initial_prompt=initial_prompt,
+        condition_on_previous_text=False,
+        word_timestamps=True, hallucination_silence_threshold=2.0,
     )
     total = info.duration
 
