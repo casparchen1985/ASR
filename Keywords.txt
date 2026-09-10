@@ -5,23 +5,28 @@ Software name -
 WDMS, WEB Installer, Jira / Jira issue / Ticket, Linear, Clickup, Slack / channel, Teams, Telegram (TG), Gerrit,
 ADC, ADC Client, Enterprise Settings, Key Mapping Manager (key service), Keypad Lock, Software Trigger, SIP Controller,
 EPC, E-ink, Ink Tag, Remote Cloud, OTA Update, Reader service, Reader Config, Barcode To Setting, CipherLAB Home,
-remote cloud express, canvas, Intelli Worker, RFID Service, EZ Config, EZ Edit, Associate Assistant, 
-OS Upgrade, Device Health Dashboard, Nginx, Launch Pad, WMDS Agent, Network Assistant, Label Check OCR Demo, HF RFID Configuration, Edge MDM, SOTI (MDM),
+remote cloud express, canvas, Intelli Worker, RFID Service, EZ Config, EZ Edit, Associate Assistant, Button Assignment,
+OS Upgrade, Device Health Dashboard, Nginx, Launch Pad, WMDS Agent, Network Assistant, Label Check OCR Demo, 
+HF RFID Configuration, Edge MDM, SOTI (MDM),
 
 Test terms -
 Pass, Fail, Conditional Pass, Pending,
 
 Project terms -
-Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, kick-off, Deployment Server, 文件/技術文件/ Spec 文件,
+Sync, Deadline, Schedule, check point, porting, Trigger Key, scan key, spec, UI, demo, layout, EOL, EOS, kick-off, 
+Deployment Server, 文件/技術文件/ Spec 文件,
 
 Reader terms -
 SDC, Hotfix service, activation tool, activation key generator, Reader Type, license file,  HW partition, CertBot
 
 Software Dev terms -
-Image, Key server, Sign Key Web, Build, OTA, source code, Manifest, deploy, JSON/JSON file, APK file, Error code, OTA Update, OTA Upgrade, third party(3rd party), 呼叫, Run/執行, 歸類, Port / 接口, Remote Desktop / 遠端桌面,
+Image, Key server, Sign Key Web, Build, OTA, source code, Manifest, deploy, JSON/JSON file, APK file, Error code, 
+OTA Update, OTA Upgrade, third party(3rd party), 呼叫, Run/執行, 歸類, Port / 接口, Remote Desktop / 遠端桌面,
+Version / v1/ v2...,
 
 Android System -
-mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll, Qualcomm / Qcom , MTK, System Update
+mini SDK version, target SDK version, intent, package name, class name, binding, factory reset, enroll, Qualcomm / Qcom , 
+MTK, System Update
 Android 9~16 (A9 ~ A16), Runtime permission / permission / 權限, ADB, push, MDM,
 
 Android Certificate -
@@ -35,7 +40,7 @@ PM Head:
 Rita
 
 Software (SW) PM:
-Peter.Lin, Chris.Fan, Lynn.Lin, Henry.Huang
+Peter.Lin, Chris.Fan, Lynn.Lin, Henry.Huang (黃)
 
 App Dev:
 JiaChuan(家全), Caspar, Howard.Lu, Eric, Ocer, Henry.Tung, Kevin, Nicole, Miller
@@ -46,10 +51,10 @@ Rick.Lu, Joe.Hsu, Aaron.Lan, 本和
 MDM RD:
 Tim, 
 
-CXS (Customer Service and Support):
+CXS (Customer Service and Support, 辦公室在 22F):
 Henry.Wang, Aaron.Chang,
 
-MIS: 
+MIS RD: 
 Jekyll, 
 
 SIT(System Integration Test):
@@ -60,7 +65,7 @@ Fedor,
 
 Outsourcing -
 ODM:
-Meig (美隔), MobiWire, 華勤, 潤芯微(RIVOTEK)
+Meig (美格), MobiWire, 華勤, 潤芯微(RIVOTEK)
 
 已離職 -
 Lawrence (CTO), Square (App Dev Director),
